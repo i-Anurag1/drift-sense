@@ -1,212 +1,208 @@
-# Drift-Sense
+# 🎯 Drift-Sense
 
-AI/CV-powered Navigation-Error Recovery for wafer inspection tools. Given a high-magnification
-**reference** image of a die site and a lower-magnification **search** image that contains that
-same site shrunk ~10x somewhere inside it, Drift-Sense returns the pixel-accurate `(x, y)` center
-of the matching region in the search image — even when the surrounding layout is a highly periodic
-DRAM or FinFET array full of near-identical repeating structure.
+> **AI/CV-powered Navigation-Error Recovery for wafer inspection tools.** 
+> 
+> Given a high-magnification reference image of a die site and a lower-magnification search image that contains that same site shrunk ~10x somewhere inside it, Drift-Sense returns the pixel-accurate (x, y) center of the matching region in the search image — even when the surrounding layout is a highly periodic DRAM or FinFET array full of near-identical repeating structure.
 
-Built for Applied Materials Problem Statement 2.
+*Built for Applied Materials Problem Statement 2.*
 
-## How it works
+---
 
-1. **Multi-scale, multi-angle search.** The reference image is resized across a range of candidate
-   scale factors (~0.055x-0.17x, centered on the nominal 10x demagnification) and rotated across a
-   small angle range (±6°), and each variant is correlated against the search image with
-   normalized cross-correlation (`cv2.TM_CCOEFF_NORMED`).
-2. **Multi-hypothesis voting.** Instead of trusting a single "best" scale/angle combination (which
-   can overfit to noise in one particular trial and lock onto the wrong periodic repeat), every
-   trial casts votes for its top local correlation peaks. Votes are spatially clustered, and the
-   cluster with the largest total support wins — a location has to be a strong match *consistently
-   across neighboring scales/rotations*, not just a one-off spike, which is exactly what defeats
-   naive template matching on periodic DRAM/FinFET arrays.
-3. **Periodicity-aware disambiguation.** If more than one vote cluster is nearly as strong as the
-   winner (a genuinely ambiguous, highly periodic region), Drift-Sense reports
-   `ambiguous_site_detected: true` and — per the spec — returns the cluster closest to the center
-   of the search image.
-4. **Optional ORB cross-check** (`verbose=True` in `locate_reference`) independently verifies the
-   estimate with keypoint matching + RANSAC homography, useful for auditing low-confidence calls.
+## ⚙️ How it works
 
-This is a classical/geometric computer-vision pipeline rather than a trained deep network. That is
-a deliberate choice for this problem: DRAM/FinFET reference sites are extremely well-defined
-geometric templates, not object classes with texture/semantic variation, so a well-designed
-multi-hypothesis correlation search is more robust and more interpretable than a CNN trained on a
-necessarily small, synthetic dataset — and it ships with zero risk of overfitting to synthetic
-noise statistics that won't match Applied Materials' real held-out test set. See
-`citations/CITATIONS.md` for the literature backing every noise/augmentation/matching choice.
-
-## Repository layout
-
-```
-drift-sense/
-├── README.md
-├── requirements.txt
-├── dataset_generator.py        # generates synthetic reference/search pairs + ground truth
-├── inference.py                 # THE script Applied Materials will run on their test data
-├── evaluate.py                  # self-evaluation + light-themed HTML report (+ 3-way comparison)
-├── train_model.py               # trains the from-scratch CNN (optional, experimental)
-├── drift_sense/
-│   ├── structures.py             # DRAM / FinFET synthetic die-pattern generators
-│   ├── degrade.py                # SEM noise, edge brightening, blur, rotation
-│   ├── matcher.py                # multi-scale/angle NCC + voting localization engine
-│   ├── cnn.py                    # from-scratch NumPy CNN (im2col conv, backprop, LeakyReLU)
-│   └── dl_features.py            # fast dense feature extraction for full-size images
-├── models/
-│   └── drift_sense_cnn.npz       # trained CNN weights (regenerate with train_model.py)
-├── citations/
-│   └── CITATIONS.md              # references for every augmentation/noise/matching choice
-└── data/, results/                # generated at runtime (gitignored)
+```mermaid
+graph TD
+    A[Reference Image] --> C
+    B[Search Image] --> C
+    C[1. Multi-scale and Multi-angle Search<br>Scale: 0.055x to 0.17x, Angle: +/- 6 deg]
+    C --> D[2. Multi-hypothesis Voting<br>Spatial clustering of top correlation peaks]
+    D --> E{3. Periodicity Check}
+    E -->|Clear Winner| F[Return Exact X, Y]
+    E -->|Ambiguous or Tie| G[Report ambiguous_site_detected<br>Return cluster nearest to center]
+    F -.-> H[4. Optional ORB Cross-Check<br>Keypoint and RANSAC]
+    G -.-> H
 ```
 
-## Setup
+1. **Multi-scale, multi-angle search.** The reference image is resized across a range of candidate scale factors (~0.055x-0.17x, centered on the nominal 10x demagnification) and rotated across a small angle range (±6°), and each variant is correlated against the search image with normalized cross-correlation (`cv2.TM_CCOEFF_NORMED`).
+
+2. **Multi-hypothesis voting.** Instead of trusting a single "best" scale/angle combination (which can overfit to noise in one particular trial and lock onto the wrong periodic repeat), every trial casts votes for its top local correlation peaks. Votes are spatially clustered, and the cluster with the largest total support wins — a location has to be a strong match consistently across neighboring scales/rotations, not just a one-off spike, which is exactly what defeats naive template matching on periodic DRAM/FinFET arrays.
+
+3. **Periodicity-aware disambiguation.** If more than one vote cluster is nearly as strong as the winner (a genuinely ambiguous, highly periodic region), Drift-Sense reports `ambiguous_site_detected: true` and — per the spec — returns the cluster closest to the center of the search image.
+
+4. **Optional ORB cross-check** (`verbose=True` in `locate_reference`) independently verifies the estimate with keypoint matching + RANSAC homography, useful for auditing low-confidence calls.
+
+> **Why classical CV?** This is a classical/geometric computer-vision pipeline rather than a trained deep network. That is a deliberate choice for this problem: DRAM/FinFET reference sites are extremely well-defined geometric templates, not object classes with texture/semantic variation, so a well-designed multi-hypothesis correlation search is more robust and more interpretable than a CNN trained on a necessarily small, synthetic dataset — and it ships with zero risk of overfitting to synthetic noise statistics that won't match Applied Materials' real held-out test set. See `citations/CITATIONS.md` for the literature backing every noise/augmentation/matching choice.
+
+---
+
+## 🗂️ Repository layout
+
+```text
+drift-sense/  
+├── README.md  
+├── requirements.txt  
+├── dataset_generator.py        # generates synthetic reference/search pairs + ground truth  
+├── inference.py                # THE script Applied Materials will run on their test data  
+├── evaluate.py                 # self-evaluation + HTML report (+ 3-way comparison)  
+├── train_model.py              # trains the from-scratch CNN (optional, experimental)  
+├── drift_sense/  
+│   ├── structures.py           # DRAM / FinFET synthetic die-pattern generators  
+│   ├── degrade.py              # SEM noise, edge brightening, blur, rotation  
+│   ├── matcher.py              # multi-scale/angle NCC + voting localization engine  
+│   ├── cnn.py                  # from-scratch NumPy CNN (im2col conv, backprop, LeakyReLU)  
+│   └── dl_features.py          # fast dense feature extraction for full-size images  
+├── models/  
+│   └── drift_sense_cnn.npz     # trained CNN weights (regenerate with train_model.py)  
+├── citations/  
+│   └── CITATIONS.md            # references for every augmentation/noise/matching choice  
+└── data/, results/             # generated at runtime (gitignored)
+```
+
+---
+
+## 🚀 Setup
 
 ```bash
-git clone <this-repo-url>
-cd drift-sense
-python3 -m venv .venv && source .venv/bin/activate      # optional but recommended
+git clone <this-repo-url>  
+cd drift-sense  
+python3 -m venv .venv && source .venv/bin/activate      # optional but recommended  
 pip install -r requirements.txt
 ```
+*Tested on Python 3.10+.*
 
-Tested on Python 3.10+.
+---
 
-## 1. Generate a synthetic dataset
+## 🛠️ Usage
+
+### 1. Generate a synthetic dataset
 
 ```bash
 python3 dataset_generator.py --style both --num-pairs 30 --output-dir ./data --seed 42
 ```
 
-Arguments:
+**Arguments:**
+*   `--style`: `dram`, `finfet`, or `both` (alternates per pair)
+*   `--num-pairs`: number of image pairs to generate (default 30)
+*   `--output-dir`: output directory (default `./data`)
+*   `--seed`: RNG seed for reproducibility
 
-| Flag | Description |
-|---|---|
-| `--style` | `dram`, `finfet`, or `both` (alternates per pair) |
-| `--num-pairs` | number of image pairs to generate (default 30) |
-| `--output-dir` | output directory (default `./data`) |
-| `--seed` | RNG seed for reproducibility |
-
-Output:
-
-```
-data/
-├── reference/<style>_<id>_reference.png
-├── search/<style>_<id>_search.png
-└── ground_truth.json     # per-pair true (x, y) center in the search image, plus style/scale/seed
+**Output:**
+```text
+data/  
+├── reference/<style>_<id>_reference.png  
+├── search/<style>_<id>_search.png  
+└── ground_truth.json     # per-pair true (x, y) center in search image, plus style/scale/seed
 ```
 
-## 2. Run localization on a single pair
+### 2. Run localization on a single pair
 
 ```bash
-python3 inference.py --reference data/reference/dram_000_reference.png \
-                      --search data/search/dram_000_search.png \
-                      --json --visualize ./results/dram_000_overlay.png
+python3 inference.py \
+    --reference data/reference/dram_000_reference.png \
+    --search data/search/dram_000_search.png \
+    --json \
+    --visualize ./results/dram_000_overlay.png
 ```
 
-Output (JSON mode):
-
+**Output (JSON mode):**
 ```json
-{
-  "x": 424.03,
-  "y": 888.51,
-  "score": 0.4251,
-  "scale": 0.1081,
-  "angle_deg": 3.0,
-  "ambiguous_site_detected": false,
-  "candidate_count": 1
+{  
+  "x": 424.03,  
+  "y": 888.51,  
+  "score": 0.4251,  
+  "scale": 0.1081,  
+  "angle_deg": 3.0,  
+  "ambiguous_site_detected": false,  
+  "candidate_count": 1  
 }
 ```
+> **Note:** `--visualize` optionally writes an annotated copy of the search image with the predicted center marked. **This is the exact script Applied Materials will run on the official test set** — it takes only a reference path and a search path and needs no manual edits.
 
-`--visualize` optionally writes an annotated copy of the search image with the predicted center
-marked. This is the exact script Applied Materials will run on the official test set — it takes
-only a reference path and a search path and needs no manual edits.
-
-## 3. Self-evaluate on the generated dataset
+### 3. Self-evaluate on the generated dataset
 
 ```bash
 python3 evaluate.py --data-dir ./data --output ./results/report.html
 ```
 
-This runs `locate_reference` on every generated pair, computes pixel-distance error against ground
-truth, and writes a light-themed HTML report (`results/report.html`) with per-pair error, mean /
-median / P90 error, ambiguous-site count, and average runtime — open it directly in a browser.
+This runs `locate_reference` on every generated pair, computes pixel-distance error against ground truth, and writes a light-themed HTML report (`results/report.html`) with per-pair error, mean / median / P90 error, ambiguous-site count, and average runtime — open it directly in a browser.
 
-On the bundled 30-pair self-eval set (seed 42): **mean error ≈ 20px, median ≈ 19px** on a
-1000×1000 search image (≈2% of frame width), with the periodicity-ambiguity flag correctly firing
-on repeat-heavy regions.
+*On the bundled 30-pair self-eval set (seed 42):* mean error ≈ 20px, median ≈ 19px on a 1000×1000 search image (≈2% of frame width), with the periodicity-ambiguity flag correctly firing on repeat-heavy regions.
 
-### Baseline comparison: does the voting scheme actually help?
+---
 
-`evaluate.py` also runs a naive single-best-peak NCC matcher for comparison — the same
-multi-scale/angle search, but committing to whichever one trial produced the single highest raw
-correlation peak, with no cross-trial voting. This is the classical approach the problem statement
-says breaks down on periodic layouts. On the same 30-pair set:
+## 📊 Baseline comparison: Does the voting scheme actually help?
 
-| | Mean error | Median error | Catastrophic fails (&gt;100px) |
-|---|---|---|
-| **Drift-Sense (voting)** | 20.1px | 18.9px | **0 / 30** |
-| Naive single-peak baseline | 170.9px | 17.7px | **8 / 30 (27%)** |
+`evaluate.py` also runs a naive single-best-peak NCC matcher for comparison — the same multi-scale/angle search, but committing to whichever one trial produced the single highest raw correlation peak, with no cross-trial voting. This is the classical approach the problem statement says breaks down on periodic layouts. 
 
-Both approaches land close to the correct site most of the time — that's expected, since most
-frame content isn't perfectly periodic. The gap shows up specifically on the highly periodic
-pairs: the naive matcher locks onto the wrong grid repeat outright (errors of 200-1000+ px, i.e.
-a different unit cell entirely), while the voting scheme's consistency-across-trials requirement
-catches exactly those cases. Reproduce with `python3 evaluate.py --data-dir ./data --output
-./results/report.html` (add `--no-baseline` to skip the comparison and run faster).
+On the same 30-pair set:
 
-## The trained DL model — and why it isn't the default
+```mermaid
+xychart-beta
+    title "Mean Error in Pixels (Lower is Better)"
+    x-axis ["Drift-Sense (Voting)", "Naive Baseline", "From-scratch CNN"]
+    y-axis "Pixels" 0 --> 450
+    bar [20, 171, 424]
+```
 
-`train_model.py` / `drift_sense/cnn.py` train a genuine 2-layer convolutional embedding network
-from scratch, with hand-written im2col convolution, LeakyReLU, global-average-pool embedding,
-gradient clipping, and real backpropagation — no autodiff library did the math. This exists because
-this repository's development sandbox has **no outbound network access**, so `pip install torch` /
-`tensorflow` fails outright; a from-scratch NumPy implementation was the only way to ship a
-genuinely trained model rather than an empty checklist item.
+| Method | Mean error | Median error | Catastrophic fails (>100px) |
+| :--- | :--- | :--- | :--- |
+| **Drift-Sense (voting)** | **20.1px** | **18.9px** | **0 / 30** |
+| Naive single-peak baseline | 170.9px | 17.7px | 8 / 30 (27%) |
+| From-scratch CNN (`--include-dl`) | 423.5px | 494.2px | 25 / 30 (83%) |
 
-Train it and run the three-way comparison yourself:
+Both classical approaches land close to the correct site most of the time — that's expected, since most frame content isn't perfectly periodic. The gap shows up specifically on the highly periodic pairs: the naive matcher locks onto the wrong grid repeat outright (errors of 200-1000+ px, i.e. a different unit cell entirely), while the voting scheme's consistency-across-trials requirement catches exactly those cases. 
 
+*Reproduce with `python3 evaluate.py --data-dir ./data --output ./results/report.html` (add `--no-baseline` to skip the comparison and run faster).*
+
+---
+
+## 🧠 The trained DL model — and why it isn't the default
+
+`train_model.py` / `drift_sense/cnn.py` train a genuine 2-layer convolutional embedding network from scratch, with hand-written im2col convolution, LeakyReLU, global-average-pool embedding, gradient clipping, and real backpropagation — no autodiff library did the math. This exists because this repository's development sandbox has no outbound network access, so `pip install torch` / `tensorflow` fails outright; a from-scratch NumPy implementation was the only way to ship a genuinely trained model rather than an empty checklist item.
+
+**Train it and run the three-way comparison yourself:**
 ```bash
-python3 train_model.py --iterations 800 --output ./models/drift_sense_cnn.npz
+python3 train_model.py --iterations 800 --output ./models/drift_sense_cnn.npz  
 python3 evaluate.py --data-dir ./data --output ./results/report.html --include-dl
 ```
 
-**Honest result, same 30-pair set:**
+**Why it performs worse:** The CNN is substantially worse than both classical methods. This isn't a bug being hidden — it's the expected outcome of the constraints: a 2-layer network trained for 800 iterations on a few hundred synthetic patches, with a global-average-pooled contrastive objective that has no way to distinguish which repeat of a periodic pattern it's looking at (that's the exact same periodicity problem the whole project is about, and it hits a small under-trained embedding much harder than it hits geometric correlation matching, which explicitly checks consistency across transforms). More training data, more iterations, a real framework with GPU-backed training, and an architecture designed for dense localization (not just a global embedding) would likely close this gap — none of that was available in this offline sandbox in the time available.
 
-| | Mean error | Median error | Catastrophic fails (&gt;100px) |
-|---|---|---|
-| **Drift-Sense (voting)** | 20.1px | 18.9px | 0 / 30 |
-| Naive single-peak baseline | 170.9px | 17.7px | 8 / 30 |
-| **From-scratch CNN (`--include-dl`)** | **423.5px** | **494.2px** | **25 / 30** |
+> ⚠️ **Note:** `inference.py` **does not use the DL model.** The classical voting matcher is what actually ships and what Applied Materials' test set will be run against; the CNN is included as a real, functioning, trained artifact (satisfying the "DL Model Weights if applicable" checklist item literally) plus an honest, reproducible comparison — not as a claim that it works better.
 
-The CNN is substantially worse than both classical methods. This isn't a bug being hidden — it's
-the expected outcome of the constraints: a 2-layer network trained for 800 iterations on a few
-hundred synthetic patches, with a global-average-pooled contrastive objective that has no way to
-distinguish *which* repeat of a periodic pattern it's looking at (that's the exact same
-periodicity problem the whole project is about, and it hits a small under-trained embedding much
-harder than it hits geometric correlation matching, which explicitly checks consistency across
-transforms). More training data, more iterations, a real framework with GPU-backed training, and
-an architecture designed for dense localization (not just a global embedding) would likely close
-this gap — none of that was available in this offline sandbox in the time available.
+---
 
-**`inference.py` does not use the DL model.** The classical voting matcher is what actually ships
-and what Applied Materials' test set will be run against; the CNN is included as a real,
-functioning, trained artifact (satisfying the "DL Model Weights if applicable" checklist item
-literally) plus an honest, reproducible comparison — not as a claim that it works better.
+## 📝 Design notes & Failure-mode awareness
 
-## Design notes / failure-mode awareness
+*   **Periodicity awareness:** The dataset generator intentionally reproduces the exact failure mode Applied Materials calls out: large regions of the search image are visually near-identical (same pitch, same via/fin pattern), so a purely local best-correlation approach can and does lock onto the wrong periodic repeat under heavy noise. The voting/clustering step in `matcher.py` is the direct response to that failure mode, and `ambiguous_site_detected` surfaces exactly when it's genuinely uncertain.
+*   **Independent Noise:** Reference and search images use independently seeded noise generators (never the same noise applied to both), per the task's data-generation requirement.
+*   **Degradation:** The search image is always degraded with more noise/blur than the reference image.
+*   **Citations:** All structural parameters (pitch, line widths, gate width, fiducial size) and every augmentation (noise model, edge brightening, blur, rotation) are cited in `citations/CITATIONS.md`.
 
-- The dataset generator intentionally reproduces the exact failure mode Applied Materials calls
-  out: large regions of the search image are visually near-identical (same pitch, same via/fin
-  pattern), so a purely local best-correlation approach can and does lock onto the wrong periodic
-  repeat under heavy noise. The voting/clustering step in `matcher.py` is the direct response to
-  that failure mode, and `ambiguous_site_detected` surfaces exactly when it's genuinely uncertain.
-- Reference and search images use **independently seeded** noise generators (never the same noise
-  applied to both), per the task's data-generation requirement.
-- The search image is always degraded with more noise/blur than the reference image.
-- All structural parameters (pitch, line widths, gate width, fiducial size) and every augmentation
-  (noise model, edge brightening, blur, rotation) are cited in `citations/CITATIONS.md`.
+---
 
-## Extending
+## 🔧 Extending
 
-- `drift_sense/structures.py` — add new `generate_<style>_canvas()` functions and register them in
-  `GENERATORS` to support additional device architectures.
-- `drift_sense/matcher.py` — `locate_reference(..., verbose=True)` returns an ORB-based
-  cross-check estimate in `MatchResult.candidates` for auditing.
+To adapt Drift-Sense for new layouts or custom evaluation pipelines:
+
+*   **Add Architectures:** In `drift_sense/structures.py`, implement new `generate_<style>_canvas()` functions and register them in the `GENERATORS` dictionary to support additional device layouts.
+*   **Audit Engine:** In `drift_sense/matcher.py`, setting `locate_reference(..., verbose=True)` returns an ORB-based cross-check estimate in `MatchResult.candidates` which you can hook into for manual auditing.
+*   **Custom Noise Models:** Modify `drift_sense/degrade.py` to introduce specific defect types or imaging artifacts characteristic of your specific optical/SEM tools.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! If you'd like to improve the localization engine, add new structural generators, or optimize the matching pipeline:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📜 License
+
+This project is distributed under the MIT License. See `LICENSE` for more information.
+
+---
+*Developed for Applied Materials Problem Statement 2* 🚀
