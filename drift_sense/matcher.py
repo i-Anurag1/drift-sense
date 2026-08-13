@@ -118,6 +118,94 @@ def locate_reference_naive(reference_img, search_img,
                         scale=0.0, angle=0.0, ambiguous=False, n_candidates=1)
 
 
+def locate_reference_ablation(reference_img, search_img,
+                               use_multiscale=True, use_multiangle=True,
+                               use_voting=True, use_periodicity=True,
+                               scale_range=(0.055, 0.17), scale_steps=12,
+                               angle_range=(-6, 6), angle_steps=5,
+                               ambiguity_ratio=0.85, cluster_radius_frac=0.35):
+    """Single configurable matcher used to isolate the contribution of each
+    stage: plain NCC -> + multi-scale -> + multi-angle -> + voting ->
+    + periodicity-aware disambiguation. See ablation.py."""
+    ref = _prep(reference_img)
+    search = _prep(search_img)
+
+    scales = np.linspace(scale_range[0], scale_range[1], scale_steps) if use_multiscale \
+        else np.array([0.5 * (scale_range[0] + scale_range[1])])
+    angles = np.linspace(angle_range[0], angle_range[1], angle_steps) if use_multiangle \
+        else np.array([0.0])
+
+    votes = []
+    tmpl_sizes = []
+    best_single = (-1.0, None, None)
+
+    for scale in scales:
+        th, tw = int(ref.shape[0] * scale), int(ref.shape[1] * scale)
+        if th < 6 or tw < 6 or th >= search.shape[0] or tw >= search.shape[1]:
+            continue
+        resized = cv2.resize(ref, (tw, th), interpolation=cv2.INTER_AREA)
+
+        for angle in angles:
+            tmpl = _rotate_template(resized, angle)
+            if tmpl.shape[0] >= search.shape[0] or tmpl.shape[1] >= search.shape[1]:
+                continue
+            corr = cv2.matchTemplate(search, tmpl, cv2.TM_CCOEFF_NORMED)
+            tmpl_sizes.append(tmpl.shape)
+
+            if use_voting:
+                top_peaks = peak_local_max(corr, min_distance=max(5, min(tmpl.shape) // 3),
+                                            num_peaks=3, exclude_border=False)
+                for py, px in top_peaks:
+                    score = float(corr[py, px])
+                    if score <= 0:
+                        continue
+                    cy, cx = py + tmpl.shape[0] / 2, px + tmpl.shape[1] / 2
+                    votes.append((cx, cy, score, scale, angle))
+            else:
+                _, max_val, _, max_loc = cv2.minMaxLoc(corr)
+                if max_val > best_single[0]:
+                    cx, cy = max_loc[0] + tmpl.shape[1] / 2, max_loc[1] + tmpl.shape[0] / 2
+                    best_single = (max_val, cx, cy)
+
+    if not use_voting:
+        if best_single[1] is None:
+            h, w = search_img.shape[:2]
+            return MatchResult(w / 2, h / 2, 0.0, 1.0, 0.0, False, 0)
+        return MatchResult(x=best_single[1], y=best_single[2], score=best_single[0],
+                            scale=0.0, angle=0.0, ambiguous=False, n_candidates=1)
+
+    if not votes:
+        h, w = search_img.shape[:2]
+        return MatchResult(w / 2, h / 2, 0.0, 1.0, 0.0, True, 0)
+
+    avg_tmpl = np.mean([max(s) for s in tmpl_sizes]) if tmpl_sizes else 40
+    radius = max(8, avg_tmpl * cluster_radius_frac)
+
+    clusters = _cluster_votes([(x, y, s) for x, y, s, _, _ in votes], radius)
+    clusters.sort(key=lambda c: c["weight"], reverse=True)
+
+    top_weight = clusters[0]["weight"]
+
+    if use_periodicity:
+        strong = [c for c in clusters if c["weight"] >= ambiguity_ratio * top_weight]
+        search_center = np.array([search.shape[1] / 2, search.shape[0] / 2])
+        strong.sort(key=lambda c: np.hypot(c["cx"] - search_center[0], c["cy"] - search_center[1]))
+        chosen = strong[0]
+        ambiguous = len(strong) > 1
+        n_candidates = len(strong)
+    else:
+        chosen = clusters[0]
+        ambiguous = False
+        n_candidates = 1
+
+    best_vote = max(chosen["members"], key=lambda m: m[2])
+
+    return MatchResult(
+        x=chosen["cx"], y=chosen["cy"], score=best_vote[2],
+        scale=0.0, angle=0.0, ambiguous=ambiguous, n_candidates=n_candidates,
+    )
+
+
 def locate_reference(reference_img, search_img,
                       scale_range=(0.055, 0.17), scale_steps=12,
                       angle_range=(-6, 6), angle_steps=5,
