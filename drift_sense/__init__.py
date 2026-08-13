@@ -1,6 +1,6 @@
 from .structures import generate_dram_canvas, generate_finfet_canvas
 from .degrade import apply_sensor_noise, apply_edge_brightening, apply_blur, apply_rotation
-from .matcher import locate_reference
+from .matcher import locate_reference, locate_reference_naive
 
 __all__ = [
     "generate_dram_canvas",
@@ -10,6 +10,7 @@ __all__ = [
     "apply_blur",
     "apply_rotation",
     "locate_reference",
+    "locate_reference_naive",
 ]
 
 __version__ = "1.0.0"

@@ -82,6 +82,42 @@ def _cluster_votes(votes, radius):
     return clusters
 
 
+def locate_reference_naive(reference_img, search_img,
+                            scale_range=(0.055, 0.17), scale_steps=12,
+                            angle_range=(-6, 6), angle_steps=5):
+    """Single-best-peak baseline (no voting/clustering) — the classical
+    template-matching approach this project is designed to improve on.
+    Kept only to quantify how much the voting scheme in locate_reference
+    helps on periodic layouts; not used by inference.py."""
+    ref = _prep(reference_img)
+    search = _prep(search_img)
+
+    scales = np.linspace(scale_range[0], scale_range[1], scale_steps)
+    angles = np.linspace(angle_range[0], angle_range[1], angle_steps)
+
+    best_score = -1.0
+    best_xy = (search.shape[1] / 2, search.shape[0] / 2)
+
+    for scale in scales:
+        th, tw = int(ref.shape[0] * scale), int(ref.shape[1] * scale)
+        if th < 6 or tw < 6 or th >= search.shape[0] or tw >= search.shape[1]:
+            continue
+        resized = cv2.resize(ref, (tw, th), interpolation=cv2.INTER_AREA)
+
+        for angle in angles:
+            tmpl = _rotate_template(resized, angle)
+            if tmpl.shape[0] >= search.shape[0] or tmpl.shape[1] >= search.shape[1]:
+                continue
+            corr = cv2.matchTemplate(search, tmpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(corr)
+            if max_val > best_score:
+                best_score = max_val
+                best_xy = (max_loc[0] + tmpl.shape[1] / 2, max_loc[1] + tmpl.shape[0] / 2)
+
+    return MatchResult(x=best_xy[0], y=best_xy[1], score=best_score,
+                        scale=0.0, angle=0.0, ambiguous=False, n_candidates=1)
+
+
 def locate_reference(reference_img, search_img,
                       scale_range=(0.055, 0.17), scale_steps=12,
                       angle_range=(-6, 6), angle_steps=5,

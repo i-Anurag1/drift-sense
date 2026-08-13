@@ -128,6 +128,25 @@ On the bundled 30-pair self-eval set (seed 42): **mean error ≈ 20px, median �
 1000×1000 search image (≈2% of frame width), with the periodicity-ambiguity flag correctly firing
 on repeat-heavy regions.
 
+### Baseline comparison: does the voting scheme actually help?
+
+`evaluate.py` also runs a naive single-best-peak NCC matcher for comparison — the same
+multi-scale/angle search, but committing to whichever one trial produced the single highest raw
+correlation peak, with no cross-trial voting. This is the classical approach the problem statement
+says breaks down on periodic layouts. On the same 30-pair set:
+
+| | Mean error | Median error | Catastrophic fails (&gt;100px) |
+|---|---|---|
+| **Drift-Sense (voting)** | 20.1px | 18.9px | **0 / 30** |
+| Naive single-peak baseline | 170.9px | 17.7px | **8 / 30 (27%)** |
+
+Both approaches land close to the correct site most of the time — that's expected, since most
+frame content isn't perfectly periodic. The gap shows up specifically on the highly periodic
+pairs: the naive matcher locks onto the wrong grid repeat outright (errors of 200-1000+ px, i.e.
+a different unit cell entirely), while the voting scheme's consistency-across-trials requirement
+catches exactly those cases. Reproduce with `python3 evaluate.py --data-dir ./data --output
+./results/report.html` (add `--no-baseline` to skip the comparison and run faster).
+
 ## Design notes / failure-mode awareness
 
 - The dataset generator intentionally reproduces the exact failure mode Applied Materials calls
