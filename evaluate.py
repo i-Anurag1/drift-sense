@@ -5,7 +5,8 @@ import time
 import numpy as np
 import cv2
 
-from drift_sense.matcher import locate_reference, locate_reference_naive
+from drift_sense.matcher import locate_reference, locate_reference_naive, locate_reference_dl
+from drift_sense.cnn import DriftSenseCNN
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -94,6 +95,10 @@ def main():
     parser.add_argument("--output", default="./results/report.html")
     parser.add_argument("--no-baseline", action="store_true",
                          help="Skip the naive single-peak baseline comparison (faster)")
+    parser.add_argument("--include-dl", action="store_true",
+                         help="Also run the experimental from-scratch CNN matcher (slow, "
+                              "and currently underperforms both other methods — see README)")
+    parser.add_argument("--dl-weights", default="./models/drift_sense_cnn.npz")
     args = parser.parse_args()
 
     with open(os.path.join(args.data_dir, "ground_truth.json")) as f:
@@ -101,7 +106,12 @@ def main():
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
 
-    errors, b_errors, rows, times, b_times = [], [], [], [], []
+    net = None
+    if args.include_dl:
+        net = DriftSenseCNN()
+        net.load(args.dl_weights)
+
+    errors, b_errors, dl_errors, rows, times, b_times, dl_times = [], [], [], [], [], [], []
     n_ambiguous = 0
 
     for i, r in enumerate(records):
@@ -127,6 +137,15 @@ def main():
             b_errors.append(b_err)
             b_x, b_y = b_result.x, b_result.y
 
+        dl_status = ""
+        if net is not None:
+            t0 = time.time()
+            dl_result = locate_reference_dl(ref, search, net)
+            dl_times.append(time.time() - t0)
+            dl_err = float(np.hypot(dl_result.x - r["gt_x"], dl_result.y - r["gt_y"]))
+            dl_errors.append(dl_err)
+            dl_status = f" dl_err={dl_err:8.2f}px"
+
         baseline_cell = (
             f"({b_x:.1f}, {b_y:.1f})" if b_x is not None else "-"
         )
@@ -144,7 +163,7 @@ def main():
             f"<td>{'<span class=\"flag\">ambiguous</span>' if result.ambiguous else '-'}</td></tr>"
         )
         print(f"[{i + 1}/{len(records)}] {r['style']:6s} voting_err={err:6.2f}px "
-              f"baseline_err={b_err:6.2f}px ambiguous={result.ambiguous}")
+              f"baseline_err={b_err:6.2f}px{dl_status} ambiguous={result.ambiguous}")
 
     errors = np.array(errors)
     b_errors = np.array(b_errors) if b_errors else np.array([np.nan])
@@ -176,6 +195,11 @@ def main():
     if not args.no_baseline:
         print(f"Baseline (single-peak) mean={np.nanmean(b_errors):.2f}px  "
               f"median={np.nanmedian(b_errors):.2f}px  fails(>100px)={int(np.nansum(b_errors > 100))}")
+    if dl_errors:
+        dl_arr = np.array(dl_errors)
+        print(f"DL (from-scratch CNN)  mean={dl_arr.mean():.2f}px  "
+              f"median={np.median(dl_arr):.2f}px  fails(>100px)={int(np.sum(dl_arr > 100))}  "
+              f"[experimental — see README, currently underperforms both methods above]")
     print(f"Report written to {args.output}")
 
 

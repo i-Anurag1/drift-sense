@@ -192,3 +192,65 @@ def locate_reference(reference_img, search_img,
             result.candidates.append(("orb_crosscheck",) + est)
 
     return result
+
+
+def locate_reference_dl(reference_img, search_img, net,
+                         scale_range=(0.055, 0.17), scale_steps=8,
+                         angle_range=(-6, 6), angle_steps=3):
+    """CNN feature-space localization: extracts the trained embedding
+    network's dense feature map once for the search image, then correlates
+    resized/rotated reference feature maps against it (same multi-scale
+    search as the classical matcher, but matching in learned feature space
+    instead of raw pixel intensity)."""
+    from drift_sense.dl_features import extract_feature_map
+
+    ref = _prep(reference_img)
+    search = _prep(search_img)
+
+    search_feat = extract_feature_map(search, net).astype(np.float32)
+
+    scales = np.linspace(scale_range[0], scale_range[1], scale_steps)
+    angles = np.linspace(angle_range[0], angle_range[1], angle_steps)
+
+    best_score = -1.0
+    best_xy = (search.shape[1] / 2, search.shape[0] / 2)
+    stride = net.conv1.stride * net.conv2.stride
+
+    for scale in scales:
+        th, tw = int(ref.shape[0] * scale), int(ref.shape[1] * scale)
+        if th < stride * 4 or tw < stride * 4:
+            continue
+        resized = cv2.resize(ref, (tw, th), interpolation=cv2.INTER_AREA)
+
+        for angle in angles:
+            tmpl = _rotate_template(resized, angle)
+            tmpl_feat = extract_feature_map(tmpl, net).astype(np.float32)
+            if (tmpl_feat.shape[0] >= search_feat.shape[0] or
+                    tmpl_feat.shape[1] >= search_feat.shape[1] or
+                    tmpl_feat.shape[0] < 2 or tmpl_feat.shape[1] < 2):
+                continue
+
+            cross = np.zeros(
+                (search_feat.shape[0] - tmpl_feat.shape[0] + 1,
+                 search_feat.shape[1] - tmpl_feat.shape[1] + 1), dtype=np.float32)
+            for c in range(search_feat.shape[2]):
+                cross += cv2.matchTemplate(search_feat[:, :, c], tmpl_feat[:, :, c], cv2.TM_CCORR)
+
+            sq = (search_feat ** 2).sum(axis=2)
+            window_energy = cv2.boxFilter(sq, ddepth=-1, ksize=(tmpl_feat.shape[1], tmpl_feat.shape[0]),
+                                           normalize=False, anchor=(0, 0))
+            window_energy = window_energy[:cross.shape[0], :cross.shape[1]]
+            tmpl_norm = np.sqrt((tmpl_feat ** 2).sum()) + 1e-8
+            corr = cross / (np.sqrt(np.maximum(window_energy, 0)) * tmpl_norm + 1e-8)
+
+            max_val = float(corr.max())
+            max_loc = np.unravel_index(np.argmax(corr), corr.shape)
+            max_loc = (max_loc[1], max_loc[0])
+            if max_val > best_score:
+                best_score = max_val
+                fx = (max_loc[0] + tmpl_feat.shape[1] / 2) * stride
+                fy = (max_loc[1] + tmpl_feat.shape[0] / 2) * stride
+                best_xy = (fx, fy)
+
+    return MatchResult(x=best_xy[0], y=best_xy[1], score=float(best_score),
+                        scale=0.0, angle=0.0, ambiguous=False, n_candidates=1)

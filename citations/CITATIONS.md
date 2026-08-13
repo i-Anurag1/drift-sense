@@ -10,8 +10,9 @@ SEM micrographs are formed by counting secondary electrons, so they are dominate
 (signal-dependent, Poisson-distributed) with an additive Gaussian floor from the detector/amplifier
 chain. We model noise as `0.35 * Poisson(signal) + Gaussian(0, sigma)`.
 
-- A. Foi, M. Trimeche, V. Katkovnik, K. Egiazarian, "Practical Poisson-Gaussian Noise Modeling and
-  Fitting for Single-Image Raw-Data," *IEEE Transactions on Image Processing*, 2008.
+- A. Foi, M. Trimeche, V. Katkovnik, K. Egiazarian, "Practical Poissonian-Gaussian Noise Modeling
+  and Fitting for Single-Image Raw-Data," *IEEE Transactions on Image Processing*, vol. 17, no. 10,
+  pp. 1737-1754, 2008. (Verified via live search Aug 2026 — DOI 10.1109/TIP.2008.2001399.)
 - M.T. Postek, A.E. Vladár, "Modeling for Quantitative and Accurate SEM Metrology," *NIST /
   Proc. SPIE Metrology, Inspection, and Process Control for Microlithography*.
 - P. Brunner et al., "Impact of Image Noise on CD Measurement in CD-SEM," *Proc. SPIE
@@ -78,8 +79,10 @@ in the 8x-10.5x range rather than fixing it at exactly 10x).
 - S.M. Sze, K.K. Ng, *Physics of Semiconductor Devices*, 3rd ed., Wiley, 2007 (DRAM cell array
   layout: orthogonal word-lines/bit-lines with a storage-node contact at each intersection).
 - C. Auth et al., "A 22nm High Performance and Low-Power CMOS Technology Featuring Fully-Depleted
-  Tri-Gate Transistors," *IEEE International Electron Devices Meeting (IEDM)*, 2012 (parallel fin
-  arrays crossed by orthogonal gate lines, the canonical FinFET layout motif we replicate).
+  Tri-Gate Transistors, Self-Aligned Contacts and High Density MIM Capacitors," *2012 Symposium on
+  VLSI Technology (VLSIT)*, pp. 131-132, 2012 (parallel fin arrays crossed by orthogonal gate
+  lines, the canonical FinFET layout motif we replicate). (Verified via live search Aug 2026 —
+  correct venue is VLSIT, not IEDM as commonly mis-cited.)
 
 ## 7. Site-identifying fiducial
 
@@ -100,9 +103,35 @@ and machine-checkable.
 - J.P. Lewis, "Fast Normalized Cross-Correlation," *Vision Interface*, 1995 (basis for the
   `TM_CCOEFF_NORMED` multi-scale/rotation search used in `drift_sense/matcher.py`).
 - E. Rublee, V. Rabaud, K. Konolige, G. Bradski, "ORB: An Efficient Alternative to SIFT or SURF,"
-  *IEEE International Conference on Computer Vision (ICCV)*, 2011 (keypoint cross-check used as an
-  optional independent verification pass, `--visualize`/`verbose` mode).
+  *IEEE International Conference on Computer Vision (ICCV)*, pp. 2564-2571, 2011 (keypoint
+  cross-check used as an optional independent verification pass, `--visualize`/`verbose` mode).
+  (Verified via live search Aug 2026 — DOI 10.1109/ICCV.2011.6126544, confirmed correct.)
 - D.G. Lowe, "Distinctive Image Features from Scale-Invariant Keypoints," *International Journal
   of Computer Vision*, 2004 (general justification for local, distinctive-feature-based
   disambiguation of repeated structure, motivating the multi-hypothesis voting/clustering scheme
   used to resist periodic false matches).
+
+## 9. DL feature-matching model (`drift_sense/cnn.py`, `train_model.py`)
+
+`train_model.py` trains a small 2-layer convolutional embedding network entirely from scratch in
+NumPy (no PyTorch/TensorFlow — neither is installable in this project's offline development
+sandbox, which has no outbound network access; see the honest note in the main README about why
+this ships as an optional/experimental component rather than the default matcher). The design —
+extracting a dense convolutional feature map and cross-correlating it between reference and search
+images, rather than comparing raw pixel intensity — follows the fully-convolutional Siamese
+matching paradigm below:
+
+- L. Bertinetto, J. Valmadre, J.F. Henriques, A. Vedaldi, P.H.S. Torr, "Fully-Convolutional Siamese
+  Networks for Object Tracking," *ECCV 2016 Workshops*, pp. 850-865, 2016. (Verified via live
+  search Aug 2026 — correct venue, authors, and page range confirmed against Springer LNCS vol.
+  9914 and the original project page at robots.ox.ac.uk/~vgg.)
+- Y. LeCun, L. Bottou, Y. Bengio, P. Haffner, "Gradient-Based Learning Applied to Document
+  Recognition," *Proceedings of the IEEE*, vol. 86, no. 11, pp. 2278-2324, 1998 (foundational
+  reference for the convolution + pooling architecture pattern used here).
+
+**Honest result:** on our 30-pair self-eval set, this from-scratch CNN performs substantially
+*worse* than the classical voting matcher (hundreds of pixels of error vs. ~20px) — see the README
+section "Why the DL model isn't the default" for the full explanation and numbers. It is included
+because a genuinely trained model is a required checklist item, and because the comparison itself
+is informative about the difficulty of this task under real compute constraints; it is not
+presented as beating the classical approach, because it doesn't.
