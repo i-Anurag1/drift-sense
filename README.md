@@ -9,8 +9,6 @@
 >
 > Given a high-magnification reference image of a die site and a lower-magnification search image that contains that same site shrunk ~10x somewhere inside it, Drift-Sense returns the pixel-accurate (x, y) center of the matching region — even when the surrounding layout is a highly periodic DRAM or FinFET array full of near-identical repeating structure.
 
-*Built for Applied Materials Problem Statement 2.*
-
 ---
 
 ## 📚 Table of contents
