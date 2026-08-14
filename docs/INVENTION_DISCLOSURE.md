@@ -222,11 +222,6 @@ claims of undisclosed prior attempts.
 
 ## 8. Inventor / authorship note
 
-This document was drafted with AI assistance (Claude, Anthropic) based on
-work performed in this repository. It is a technical description of a
-mechanism that was designed, implemented, and empirically validated as part
-of this project — it is offered as a starting point for a human inventor
-and patent attorney to review, refine, verify against prior art, and decide
-whether and how to pursue formal IP protection. No claim of patentability,
-novelty, or freedom-to-operate is made or implied by this document or by
-Claude.
+This document presents a technical description of a mechanism designed, implemented, and empirically validated as part of this project. It is intended as a starting point for review by the inventors and patent counsel, including further refinement, technical verification, prior-art analysis, and assessment of appropriate intellectual property protection.
+
+No claim or representation is made regarding patentability, novelty, non-obviousness, or freedom to operate. Any decision regarding formal IP protection should be based on independent technical and legal review.
