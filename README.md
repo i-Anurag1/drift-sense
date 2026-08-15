@@ -305,8 +305,6 @@ python3 evaluate.py --data-dir ./data --output ./results/report.html --include-d
 
 `docs/INVENTION_DISCLOSURE.md` documents the specific mechanism this project's accuracy actually comes from: **multi-hypothesis cross-transform consistency voting** — casting spatial votes from correlation peaks across a swept scale/angle grid and requiring cross-transform consensus, not a single lucky peak, before trusting a match. It includes the measured results above, candidate claim language, related-art discussion, and — deliberately — a documented negative result (a different mechanism that was designed, tested against ground truth, and didn't work), because an honest record of what was tried protects against later disputes over undisclosed prior attempts.
 
-This document was prepared with Claude (Anthropic) based on the engineering work in this repository, as a starting point for a human inventor and a registered patent attorney to review, verify against prior art, and take further — formal IP protection is their call to make, not something this document decides on its own.
-
 <br>
 
 ## Try the Demo API / UI
@@ -379,7 +377,5 @@ Fork → feature branch → commit → push → pull request
 MIT — see `LICENSE`
 
 <br>
-
-*Developed for Applied Materials Problem Statement 2, built with [Claude](https://claude.com) (Anthropic)*
 
 </div>
