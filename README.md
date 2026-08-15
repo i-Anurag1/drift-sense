@@ -1,78 +1,129 @@
+<div align="center">
+
 # Drift-Sense
 
-AI/CV-powered Navigation-Error Recovery for wafer inspection tools. Given a high-magnification
-**reference** image of a die site and a lower-magnification **search** image that contains that
-same site shrunk ~10x somewhere inside it, Drift-Sense returns the pixel-accurate `(x, y)` center
-of the matching region in the search image — even when the surrounding layout is a highly periodic
-DRAM or FinFET array full of near-identical repeating structure.
+### Navigation-Error Recovery for Wafer Inspection Tools
 
-Built for Applied Materials Problem Statement 2.
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![OpenCV](https://img.shields.io/badge/OpenCV-4.13-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org)
+[![NumPy](https://img.shields.io/badge/NumPy-2.4-013243?style=for-the-badge&logo=numpy&logoColor=white)](https://numpy.org)
+[![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com)
+[![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen?style=for-the-badge)](tests/)
+[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 
-## How it works
+Locates a reference die site inside a lower-magnification search image — even when the surrounding layout is a highly periodic DRAM or FinFET array full of near-identical repeating structure.
 
-1. **Multi-scale, multi-angle search.** The reference image is resized across a range of candidate
-   scale factors (~0.055x-0.17x, centered on the nominal 10x demagnification) and rotated across a
-   small angle range (±6°), and each variant is correlated against the search image with
-   normalized cross-correlation (`cv2.TM_CCOEFF_NORMED`).
-2. **Multi-hypothesis voting.** Instead of trusting a single "best" scale/angle combination (which
-   can overfit to noise in one particular trial and lock onto the wrong periodic repeat), every
-   trial casts votes for its top local correlation peaks. Votes are spatially clustered, and the
-   cluster with the largest total support wins — a location has to be a strong match *consistently
-   across neighboring scales/rotations*, not just a one-off spike, which is exactly what defeats
-   naive template matching on periodic DRAM/FinFET arrays.
-3. **Periodicity-aware disambiguation.** If more than one vote cluster is nearly as strong as the
-   winner (a genuinely ambiguous, highly periodic region), Drift-Sense reports
-   `ambiguous_site_detected: true` and — per the spec — returns the cluster closest to the center
-   of the search image.
-4. **Optional ORB cross-check** (`verbose=True` in `locate_reference`) independently verifies the
-   estimate with keypoint matching + RANSAC homography, useful for auditing low-confidence calls.
+*Built for Applied Materials Problem Statement 2*
 
-![Drift-Sense architecture](docs/architecture.png)
+</div>
 
-This is a classical/geometric computer-vision pipeline rather than a trained deep network. That is
-a deliberate choice for this problem: DRAM/FinFET reference sites are extremely well-defined
-geometric templates, not object classes with texture/semantic variation, so a well-designed
-multi-hypothesis correlation search is more robust and more interpretable than a CNN trained on a
-necessarily small, synthetic dataset — and it ships with zero risk of overfitting to synthetic
-noise statistics that won't match Applied Materials' real held-out test set. See
-`citations/CITATIONS.md` for the literature backing every noise/augmentation/matching choice.
+<br>
 
-## Repository layout
+<div align="center">
 
+| Mean error (unseen) | Catastrophic fails | Test coverage | Runtime |
+|:---:|:---:|:---:|:---:|
+| **17.3 px** / 1000px frame | **0 / 110** | **24 tests** | **~3.4s / pair** |
+
+</div>
+
+<br>
+
+## Table of Contents
+
+| | | |
+|---|---|---|
+| [How It Works](#how-it-works) | [Benchmark Results](#benchmark-on-100-unseen-pairs) | [Ablation Study](#ablation-study--what-each-stage-actually-contributes) |
+| [Visual Results](#results--visual-beforeafter) | [The DL Model](#the-trained-dl-model--and-why-it-isnt-the-default) | [Invention Disclosure](#invention-disclosure--the-novel-technical-contribution) |
+| [Demo API](#try-the-demo-api--ui) | [Docker](#docker) | [Tests & CI](#tests--ci) |
+
+<br>
+
+## How It Works
+
+```mermaid
+graph TD
+    A["Reference Image<br/>high-mag site"] --> C
+    B["Search Image<br/>1000×1000, low-mag"] --> C
+    C["Preprocess<br/>CLAHE + light denoise"]
+    C --> D["Multi-Scale × Multi-Angle NCC<br/>cv2.TM_CCOEFF_NORMED<br/>scale 0.055x–0.17x · angle ±6°"]
+    D --> E["Top-3 Peaks per Trial<br/>skimage peak_local_max"]
+    E --> F["Multi-Hypothesis Voting<br/>spatial clustering of peaks"]
+    F --> G{"Periodicity Check<br/>near-tied clusters?"}
+    G -->|Clear winner| H["Highest-weight cluster"]
+    G -->|Ambiguous| I["Cluster closest to<br/>search center — spec rule"]
+    H --> J["MatchResult<br/>x, y, score, ambiguous"]
+    I --> J
+    J -.audit.-> K["ORB Cross-Check<br/>keypoints + RANSAC"]
+
+    style A fill:#dbeafe,stroke:#1d4ed8,color:#111
+    style B fill:#dbeafe,stroke:#1d4ed8,color:#111
+    style C fill:#f5f3ff,stroke:#7c3aed,color:#111
+    style D fill:#f5f3ff,stroke:#7c3aed,color:#111
+    style E fill:#f5f3ff,stroke:#7c3aed,color:#111
+    style F fill:#ecfdf5,stroke:#059669,color:#111
+    style G fill:#ecfdf5,stroke:#059669,color:#111
+    style H fill:#fff7ed,stroke:#c2410c,color:#111
+    style I fill:#fff7ed,stroke:#c2410c,color:#111
+    style J fill:#1f2937,stroke:#1f2937,color:#fff
+    style K fill:#fef2f2,stroke:#dc2626,color:#111
 ```
+
+<div align="center">
+<img src="docs/architecture.png" alt="Drift-Sense architecture diagram" width="850"/>
+</div>
+
+**1. Multi-scale, multi-angle search.** The reference is resized across candidate scales (~0.055x–0.17x, centered on the nominal 10x demagnification) and rotated across ±6°, correlated against the search image at every combination.
+
+**2. Multi-hypothesis voting.** Every trial casts votes for its top local correlation peaks, spatially clustered; the cluster with the greatest *cross-trial* support wins — not just whichever single trial happened to score highest.
+
+**3. Periodicity-aware disambiguation.** Near-tied clusters are flagged `ambiguous_site_detected: true` and resolved by proximity to the search image's center, per spec.
+
+**4. Optional ORB cross-check.** Independent keypoint + RANSAC verification for auditing low-confidence calls.
+
+> **Why classical CV, not a network by default?** DRAM/FinFET sites are well-defined geometric templates, not semantic object classes — a well-designed multi-hypothesis search is more robust and interpretable here than a CNN trained on a small synthetic set, with zero risk of overfitting to synthetic noise statistics that won't match Applied Materials' real test data. A real trained CNN **is** included below, with an honest comparison — not as the default.
+
+<br>
+
+## Repository Layout
+
+```text
 drift-sense/
 ├── README.md
 ├── requirements.txt
 ├── Dockerfile / .dockerignore
-├── dataset_generator.py        # generates synthetic reference/search pairs + ground truth
-├── inference.py                 # THE script Applied Materials will run on their test data
-├── evaluate.py                  # self-evaluation + light-themed HTML report (+ 3-way comparison)
+├── dataset_generator.py        # synthetic reference/search pairs + ground truth
+├── inference.py                 # the script Applied Materials will run on test data
+├── evaluate.py                  # self-eval + HTML report (voting vs baseline vs DL)
 ├── benchmark.py                  # accuracy/runtime/memory benchmark on unseen data
 ├── ablation.py                   # 5-stage ablation study
-├── train_model.py               # trains the from-scratch CNN (optional, experimental)
+├── train_model.py               # trains the from-scratch CNN (optional)
 ├── drift_sense/
 │   ├── structures.py             # DRAM / FinFET synthetic die-pattern generators
 │   ├── degrade.py                # SEM noise, edge brightening, blur, rotation
-│   ├── matcher.py                # multi-scale/angle NCC + voting localization engine
-│   ├── cnn.py                    # from-scratch NumPy CNN (im2col conv, backprop, LeakyReLU)
-│   ├── dl_features.py            # fast dense feature extraction for full-size images
-│   └── periodicity.py            # experimental, unintegrated — see docs/INVENTION_DISCLOSURE.md
+│   ├── matcher.py                # multi-scale/angle NCC + voting engine
+│   ├── cnn.py                    # from-scratch NumPy CNN (im2col, backprop)
+│   ├── dl_features.py            # fast dense feature extraction
+│   └── periodicity.py            # experimental — honest negative result, see disclosure
 ├── api/
 │   ├── app.py                    # Flask demo API + upload UI
 │   └── templates/index.html
-├── tests/                         # 24 unit tests (matcher, clustering, transforms, evaluate)
-├── .github/workflows/tests.yml    # CI: tests + smoke test on Python 3.10-3.12
+├── tests/                         # 24 unit tests
+├── .github/workflows/tests.yml    # CI across Python 3.11 / 3.12
 ├── docs/
 │   ├── architecture.png
 │   ├── error_distribution.png
 │   ├── results_gallery.png
-│   └── INVENTION_DISCLOSURE.md   # draft IP disclosure — see below
+│   └── INVENTION_DISCLOSURE.md
 ├── models/
-│   └── drift_sense_cnn.npz       # trained CNN weights (regenerate with train_model.py)
+│   └── drift_sense_cnn.npz
 ├── citations/
-│   └── CITATIONS.md              # references for every augmentation/noise/matching choice
+│   └── CITATIONS.md
 └── data/, data_benchmark/, results/    # generated at runtime (gitignored)
 ```
+
+<br>
 
 ## Setup
 
@@ -83,235 +134,195 @@ python3 -m venv .venv && source .venv/bin/activate      # optional but recommend
 pip install -r requirements.txt
 ```
 
-Tested on Python 3.10+.
+*Tested on Python 3.11–3.12.*
 
-## 1. Generate a synthetic dataset
+<br>
+
+## Usage
+
+### 1. Generate a synthetic dataset
 
 ```bash
 python3 dataset_generator.py --style both --num-pairs 30 --output-dir ./data --seed 42
 ```
 
-Arguments:
-
 | Flag | Description |
 |---|---|
-| `--style` | `dram`, `finfet`, or `both` (alternates per pair) |
-| `--num-pairs` | number of image pairs to generate (default 30) |
-| `--output-dir` | output directory (default `./data`) |
+| `--style` | `dram`, `finfet`, or `both` |
+| `--num-pairs` | number of pairs (default 30) |
+| `--output-dir` | output directory |
 | `--seed` | RNG seed for reproducibility |
 
-Output:
-
-```
-data/
-├── reference/<style>_<id>_reference.png
-├── search/<style>_<id>_search.png
-└── ground_truth.json     # per-pair true (x, y) center in the search image, plus style/scale/seed
-```
-
-## 2. Run localization on a single pair
+### 2. Run localization on a single pair
 
 ```bash
-python3 inference.py --reference data/reference/dram_000_reference.png \
-                      --search data/search/dram_000_search.png \
-                      --json --visualize ./results/dram_000_overlay.png
+python3 inference.py \
+    --reference data/reference/dram_000_reference.png \
+    --search data/search/dram_000_search.png \
+    --json --visualize ./results/dram_000_overlay.png
 ```
-
-Output (JSON mode):
 
 ```json
 {
-  "x": 424.03,
-  "y": 888.51,
-  "score": 0.4251,
-  "scale": 0.1081,
-  "angle_deg": 3.0,
+  "x": 287.79,
+  "y": 148.91,
+  "score": 0.4254,
+  "scale": 0.1177,
+  "angle_deg": -6.0,
   "ambiguous_site_detected": false,
   "candidate_count": 1
 }
 ```
 
-`--visualize` optionally writes an annotated copy of the search image with the predicted center
-marked. This is the exact script Applied Materials will run on the official test set — it takes
-only a reference path and a search path and needs no manual edits.
+> This is the exact script Applied Materials will run on the official test set — reference path + search path in, JSON out, no manual edits.
 
-## 3. Self-evaluate on the generated dataset
+### 3. Self-evaluate
 
 ```bash
 python3 evaluate.py --data-dir ./data --output ./results/report.html
 ```
 
-This runs `locate_reference` on every generated pair, computes pixel-distance error against ground
-truth, and writes a light-themed HTML report (`results/report.html`) with per-pair error, mean /
-median / P90 error, ambiguous-site count, and average runtime — open it directly in a browser.
+*30-pair dev set: mean error ≈ 20px, median ≈ 19px on a 1000×1000 frame (≈2% of frame width).*
 
-On the bundled 30-pair self-eval set (seed 42): **mean error ≈ 20px, median ≈ 19px** on a
-1000×1000 search image (≈2% of frame width), with the periodicity-ambiguity flag correctly firing
-on repeat-heavy regions.
+<br>
 
-### Baseline comparison: does the voting scheme actually help?
+## Results — Visual Before/After
 
-`evaluate.py` also runs a naive single-best-peak NCC matcher for comparison — the same
-multi-scale/angle search, but committing to whichever one trial produced the single highest raw
-correlation peak, with no cross-trial voting. This is the classical approach the problem statement
-says breaks down on periodic layouts. On the same 30-pair set:
+<div align="center">
+<img src="docs/results_gallery.png" alt="Results gallery" width="900"/>
+<p><em>Reference site (top) vs. search image with ground truth and prediction overlaid (bottom) — DRAM and FinFET, including a near-perfectly-periodic fin array.</em></p>
+</div>
 
-| | Mean error | Median error | Catastrophic fails (&gt;100px) |
-|---|---|---|
-| **Drift-Sense (voting)** | 20.1px | 18.9px | **0 / 30** |
-| Naive single-peak baseline | 170.9px | 17.7px | **8 / 30 (27%)** |
+<br>
 
-Both approaches land close to the correct site most of the time — that's expected, since most
-frame content isn't perfectly periodic. The gap shows up specifically on the highly periodic
-pairs: the naive matcher locks onto the wrong grid repeat outright (errors of 200-1000+ px, i.e.
-a different unit cell entirely), while the voting scheme's consistency-across-trials requirement
-catches exactly those cases. Reproduce with `python3 evaluate.py --data-dir ./data --output
-./results/report.html` (add `--no-baseline` to skip the comparison and run faster).
+## Benchmark on 100+ Unseen Pairs
 
-## The trained DL model — and why it isn't the default
-
-`train_model.py` / `drift_sense/cnn.py` train a genuine 2-layer convolutional embedding network
-from scratch, with hand-written im2col convolution, LeakyReLU, global-average-pool embedding,
-gradient clipping, and real backpropagation — no autodiff library did the math. This exists because
-this repository's development sandbox has **no outbound network access**, so `pip install torch` /
-`tensorflow` fails outright; a from-scratch NumPy implementation was the only way to ship a
-genuinely trained model rather than an empty checklist item.
-
-Train it and run the three-way comparison yourself:
-
-```bash
-python3 train_model.py --iterations 800 --output ./models/drift_sense_cnn.npz
-python3 evaluate.py --data-dir ./data --output ./results/report.html --include-dl
-```
-
-**Honest result, same 30-pair set:**
-
-| | Mean error | Median error | Catastrophic fails (&gt;100px) |
-|---|---|---|
-| **Drift-Sense (voting)** | 20.1px | 18.9px | 0 / 30 |
-| Naive single-peak baseline | 170.9px | 17.7px | 8 / 30 |
-| **From-scratch CNN (`--include-dl`)** | **423.5px** | **494.2px** | **25 / 30** |
-
-The CNN is substantially worse than both classical methods. This isn't a bug being hidden — it's
-the expected outcome of the constraints: a 2-layer network trained for 800 iterations on a few
-hundred synthetic patches, with a global-average-pooled contrastive objective that has no way to
-distinguish *which* repeat of a periodic pattern it's looking at (that's the exact same
-periodicity problem the whole project is about, and it hits a small under-trained embedding much
-harder than it hits geometric correlation matching, which explicitly checks consistency across
-transforms). More training data, more iterations, a real framework with GPU-backed training, and
-an architecture designed for dense localization (not just a global embedding) would likely close
-this gap — none of that was available in this offline sandbox in the time available.
-
-**`inference.py` does not use the DL model.** The classical voting matcher is what actually ships
-and what Applied Materials' test set will be run against; the CNN is included as a real,
-functioning, trained artifact (satisfying the "DL Model Weights if applicable" checklist item
-literally) plus an honest, reproducible comparison — not as a claim that it works better.
-
-## Results — visual before/after
-
-Reference site (top row) vs. the search image with ground truth (green circle) and Drift-Sense's
-prediction (red X) overlaid (bottom row), on held-out dev pairs:
-
-![Results gallery](docs/results_gallery.png)
-
-The two markers overlap closely in every case shown, including on the FinFET fin-array pair (right
-two columns) where the surrounding structure is almost perfectly periodic in one direction.
-
-## Benchmark on 100+ unseen pairs
-
-`benchmark.py` runs a full accuracy / runtime / memory benchmark. The numbers below are from
-**110 pairs generated with a seed (999) never used during development** — a genuinely unseen set,
-not the same 30 pairs used earlier in this README:
+110 pairs, seed `999`, never touched during development:
 
 ```bash
 python3 dataset_generator.py --style both --num-pairs 110 --output-dir ./data_benchmark --seed 999
 python3 benchmark.py --data-dir ./data_benchmark --output ./results/benchmark.json
 ```
 
+<div align="center">
+
 | Metric | Value |
 |---|---|
-| Mean error | 17.31 px |
-| Median error | 15.35 px |
-| P90 / P95 / P99 error | 32.1 / 35.8 / 44.0 px |
+| Mean error | **17.31 px** |
+| Median error | **15.35 px** |
+| P90 / P95 / P99 | 32.1 / 35.8 / 44.0 px |
 | Within 15px / 30px / 50px | 47% / 87% / 99% |
 | Catastrophic fails (&gt;100px) | **0 / 110** |
 | Mean runtime | 3.44s / pair |
-| Median / P95 runtime | 3.32s / 3.62s |
-| Peak memory | ~10.5 MB (mean), 10.6 MB (max) |
+| Peak memory | ~10.5 MB |
 
-![Error distribution](docs/error_distribution.png)
+</div>
 
-The error distribution is right-skewed with a long-ish tail (the P95/P99 gap shows a handful of
-harder pairs), which is exactly why we report percentiles instead of only mean/median — a single
-average would hide how the harder ~10% of cases actually behave. Zero catastrophic failures across
-110 unseen pairs is the number that matters most for a navigation-error-recovery tool: it means the
-voting scheme never silently returned a wrong-cell match on this set.
+<div align="center">
+<img src="docs/error_distribution.png" alt="Error distribution" width="850"/>
+</div>
 
-*(Runtime note: ~3.4s/pair is the exhaustive Python/OpenCV search loop — see "Runtime & memory"
-below for where that time actually goes and how to trade it for speed.)*
+```mermaid
+xychart-beta
+    title "Cumulative Accuracy — 110 Unseen Pairs"
+    x-axis ["< 15px", "< 30px", "< 50px"]
+    y-axis "% of pairs" 0 --> 100
+    bar [47, 87, 99]
+```
 
-## Ablation study — what each stage actually contributes
+Zero catastrophic failures across 110 unseen pairs is the number that matters most for navigation-error recovery — it means the voting scheme never silently returned a wrong-cell match on this set.
 
-`ablation.py` isolates the contribution of each piece of the matching pipeline by running the same
-underlying NCC search with features toggled on/off, on the same dev pairs:
+<br>
+
+## Ablation Study — What Each Stage Actually Contributes
 
 ```bash
 python3 ablation.py --data-dir ./data --limit 20
 ```
 
-| Stage | Mean err | Median err | P90 err | Fails &gt;100px | Avg time/pair |
-|---|---|---|---|---|---|
-| 1. NCC only (fixed scale/angle) | 13.2px | 12.2px | 21.4px | 0/20 | 78ms |
-| 2. + multi-scale | 191.8px | 20.0px | 657.8px | 6/20 | 475ms |
-| 3. + multi-scale + multi-angle | 149.7px | 18.6px | 552.9px | 5/20 | 2003ms |
-| 4. + voting (no periodicity tie-break) | 18.4px | 18.7px | 26.8px | 0/20 | 3216ms |
-| 5. + periodicity-aware disambiguation (full) | **19.8px** | **18.9px** | **31.9px** | **0/20** | 3319ms |
+```mermaid
+xychart-beta
+    title "Ablation: Mean Error per Stage (lower is better)"
+    x-axis ["1. NCC only", "2. +scale", "3. +angle", "4. +voting", "5. +periodicity"]
+    y-axis "Mean error (px)" 0 --> 200
+    bar [13, 192, 150, 18, 20]
+```
 
-This result is more interesting than "each stage helps a little" — **stages 2 and 3 are worse than
-stage 1**. Searching more scales and angles without any way to filter false positives just gives
-noise more chances to win outright on a periodic layout (mean error jumps to 150-190px and 5-6/20
-pairs fail catastrophically). Voting (stage 4) is what actually fixes it — not by adding more
-search, but by requiring a location to win *consistently* across neighboring scale/angle trials
-before it's trusted. Stage 5's periodicity-aware tie-break doesn't change accuracy on this
-particular dev set (no genuinely tied pairs occurred here) but is what the spec explicitly requires
-and is what fires on harder inputs — see `ambiguous_site_detected` in the API/CLI output.
+<div align="center">
 
-Stage 1's low time-cost and decent accuracy is *not* a reason to skip the search: it only works
-this well because our synthetic downsample factor happens to sit close to the fixed guess. Real
-tool drift will not cooperate that reliably — that's the entire premise of the problem statement.
+| Stage | Mean err | P90 err | Fails &gt;100px | Time/pair |
+|---|---|---|---|---|
+| 1. NCC only (fixed scale/angle) | 13.2px | 21.4px | 0/20 | 78ms |
+| 2. + multi-scale | 191.8px | 657.8px | 6/20 | 475ms |
+| 3. + multi-scale + multi-angle | 149.7px | 552.9px | 5/20 | 2003ms |
+| 4. + voting | 18.4px | 26.8px | 0/20 | 3216ms |
+| **5. + periodicity disambiguation** | **19.8px** | **31.9px** | **0/20** | 3319ms |
 
-## Runtime & memory
+</div>
 
-The ~3.3s/pair cost comes from `locate_reference`'s exhaustive scale x angle sweep (12 scales x 5
-angles x up to 3 peaks each = up to 180 correlation calls). To speed this up for production, narrow
-`scale_range`/`angle_range` around the tool's known calibration tolerance, or reduce
-`scale_steps`/`angle_steps` — stage 1 above shows the floor (~80ms) when no search is needed at
-all. Peak memory stays under 11MB per call regardless, since OpenCV correlation buffers are the
-only significant allocation and nothing is cached across calls.
+**The interesting part:** stages 2–3 are *worse* than stage 1. More scale/angle search without voting just gives noise more chances to win outright on a periodic layout. Voting is what turns a wider search from a liability into an asset — by requiring cross-transform consensus, not a single lucky trial.
 
-## Try the demo API / UI
+<br>
 
-A minimal Flask app wraps `locate_reference` for interactive testing — upload two images, get JSON
-back (or a visual overlay):
+## Baseline Comparison
+
+```mermaid
+xychart-beta
+    title "Mean Error by Method — 30-pair dev set (lower is better)"
+    x-axis ["Drift-Sense (Voting)", "Naive Baseline", "From-scratch CNN"]
+    y-axis "Pixels" 0 --> 450
+    bar [20, 171, 424]
+```
+
+<div align="center">
+
+| Method | Mean err | Catastrophic fails |
+|---|---|---|
+| **Drift-Sense (voting)** | **20.1px** | **0 / 30** |
+| Naive single-peak baseline | 170.9px | 8 / 30 (27%) |
+| From-scratch CNN | 423.5px | 25 / 30 (83%) |
+
+</div>
+
+The naive matcher locks onto the wrong grid repeat outright on highly periodic pairs (200–1000+ px errors — a different unit cell entirely). The voting scheme's consistency requirement catches exactly those cases.
+
+<br>
+
+## The Trained DL Model — and Why It Isn't the Default
+
+`train_model.py` / `drift_sense/cnn.py` train a real 2-layer convolutional embedding network **entirely from scratch in NumPy** — hand-written im2col convolution, LeakyReLU, global-average-pool embedding, gradient clipping, real backpropagation, no autodiff library. This project's development sandbox has no outbound network access, so `pip install torch` fails outright — a from-scratch implementation was the only way to ship a genuinely trained model rather than an empty checklist item.
 
 ```bash
-pip install -r requirements.txt
+python3 train_model.py --iterations 800 --output ./models/drift_sense_cnn.npz
+python3 evaluate.py --data-dir ./data --output ./results/report.html --include-dl
+```
+
+**Honest result:** the CNN underperforms both classical methods (423.5px mean error). A 2-layer network trained for 800 iterations on a few hundred synthetic patches, with a globally-pooled contrastive objective, has no way to tell *which* repeat of a periodic pattern it's looking at — the same problem the whole project is about, hitting a small under-trained embedding harder than it hits geometric correlation matching. **`inference.py` does not use the DL model** — it's included as a real, functioning, trained artifact plus an honest comparison, not a performance claim.
+
+<br>
+
+## Invention Disclosure — The Novel Technical Contribution
+
+`docs/INVENTION_DISCLOSURE.md` documents the specific mechanism this project's accuracy actually comes from: **multi-hypothesis cross-transform consistency voting** — casting spatial votes from correlation peaks across a swept scale/angle grid and requiring cross-transform consensus, not a single lucky peak, before trusting a match. It includes the measured results above, candidate claim language, related-art discussion, and — deliberately — a documented negative result (a different mechanism that was designed, tested against ground truth, and didn't work), because an honest record of what was tried protects against later disputes over undisclosed prior attempts.
+
+This document was prepared with Claude (Anthropic) based on the engineering work in this repository, as a starting point for a human inventor and a registered patent attorney to review, verify against prior art, and take further — formal IP protection is their call to make, not something this document decides on its own.
+
+<br>
+
+## Try the Demo API / UI
+
+```bash
 python3 api/app.py
-# open http://localhost:5000 in a browser for the upload UI
+# open http://localhost:5000
 ```
 
 ```bash
-# or hit it directly
 curl -X POST -F "reference=@data/reference/dram_000_reference.png" \
              -F "search=@data/search/dram_000_search.png" \
              http://localhost:5000/locate
-
-curl -X POST -F "reference=@..." -F "search=@..." \
-             "http://localhost:5000/locate?visualize=1" -o overlay.png
 ```
 
-This is a thin demo wrapper for manual testing — `inference.py` remains the script Applied
-Materials will actually run on their test set.
+<br>
 
 ## Docker
 
@@ -320,59 +331,55 @@ docker build -t drift-sense .
 docker run -p 5000:5000 drift-sense
 ```
 
-**Honest note:** this project was built in a sandbox with no Docker daemon available, so the image
-above has not been build-tested end-to-end here. The Dockerfile is a standard, minimal
-`python:3.11-slim` + `libgl1`/`libglib2.0-0` (required by OpenCV's non-headless build) + `pip
-install -r requirements.txt` setup with no unusual steps — if it fails on your machine, it's most
-likely a version mismatch worth reporting, not a fundamentally broken setup.
+> Built in a sandbox with no Docker daemon available, so not build-tested end-to-end here — standard `python:3.11-slim` + `libgl1`/`libglib2.0-0` + `pip install -r requirements.txt`, no unusual steps.
+
+<br>
 
 ## Tests & CI
-
-24 unit tests cover the geometric transforms, vote clustering, matcher, and evaluation helpers:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-`.github/workflows/tests.yml` runs this same suite on every push/PR across Python 3.10-3.12, plus a
-smoke test that generates a tiny dataset and runs `inference.py` end-to-end — so a broken commit
-that still passes unit tests but breaks the actual CLI pipeline still gets caught.
+[![Tests](https://img.shields.io/badge/24%2F24-passing-brightgreen?style=flat-square)](tests/)
+[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white)](.github/workflows/tests.yml)
 
+`.github/workflows/tests.yml` runs this suite on every push/PR, plus a smoke test that generates a dataset and runs `inference.py` end-to-end.
 
+<br>
 
-- The dataset generator intentionally reproduces the exact failure mode Applied Materials calls
-  out: large regions of the search image are visually near-identical (same pitch, same via/fin
-  pattern), so a purely local best-correlation approach can and does lock onto the wrong periodic
-  repeat under heavy noise. The voting/clustering step in `matcher.py` is the direct response to
-  that failure mode, and `ambiguous_site_detected` surfaces exactly when it's genuinely uncertain.
-- Reference and search images use **independently seeded** noise generators (never the same noise
-  applied to both), per the task's data-generation requirement.
-- The search image is always degraded with more noise/blur than the reference image.
-- All structural parameters (pitch, line widths, gate width, fiducial size) and every augmentation
-  (noise model, edge brightening, blur, rotation) are cited in `citations/CITATIONS.md`.
+## Design Notes & Failure-Mode Awareness
 
-## Invention disclosure — the novel technical contribution
+- **Periodicity awareness** — the dataset generator reproduces the exact failure mode called out in the problem statement: large near-identical periodic regions, where local-best-correlation locks onto the wrong repeat under noise. `ambiguous_site_detected` surfaces exactly when it's genuinely uncertain.
+- **Independent noise** — reference and search images use independently seeded noise generators.
+- **Degradation asymmetry** — search images always carry more noise/blur than reference images.
+- **Citations** — every structural parameter and augmentation is cited in `citations/CITATIONS.md`, with several verified live against original sources (2 citation errors found and corrected during development).
 
-`docs/INVENTION_DISCLOSURE.md` is a draft invention disclosure documenting
-the specific mechanism this project's accuracy actually comes from:
-**multi-hypothesis cross-transform consistency voting** — casting spatial
-votes from correlation peaks across a swept scale/angle grid, clustering
-them, and requiring cross-transform consensus (not a single lucky peak)
-before trusting a match. It includes measured results, candidate claim
-language for attorney review, a related-art discussion, and — deliberately
-— a section on a different mechanism that was designed, tested against
-ground truth, and **did not work** (kept as an honest negative result, not
-hidden).
-
-**This is not a patentability opinion.** Whether any of this is novel over
-issued patents (including, plausibly, Applied Materials' own metrology
-patent portfolio) requires a professional prior-art search and a registered
-patent attorney's review — neither of which this document performs or
-substitutes for.
+<br>
 
 ## Extending
 
-- `drift_sense/structures.py` — add new `generate_<style>_canvas()` functions and register them in
-  `GENERATORS` to support additional device architectures.
-- `drift_sense/matcher.py` — `locate_reference(..., verbose=True)` returns an ORB-based
-  cross-check estimate in `MatchResult.candidates` for auditing.
+- **New architectures** → `drift_sense/structures.py`, register in `GENERATORS`
+- **Audit engine** → `locate_reference(..., verbose=True)` returns ORB cross-check estimates
+- **Custom noise models** → `drift_sense/degrade.py`
+- **Speed vs. thoroughness** → narrow `scale_range`/`angle_range` for known calibration tolerance
+
+<br>
+
+---
+
+<div align="center">
+
+### Contributing
+
+Fork → feature branch → commit → push → pull request
+
+### License
+
+MIT — see `LICENSE`
+
+<br>
+
+*Developed for Applied Materials Problem Statement 2, built with [Claude](https://claude.com) (Anthropic)*
+
+</div>
